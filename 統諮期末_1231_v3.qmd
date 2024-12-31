@@ -1,0 +1,1166 @@
+---
+title: "final"
+date: today
+author: Chu,Li,Hsu
+format:
+ pdf:
+    engine: xelatex
+    documentclass: article
+    geometry: "left=2cm, right=2cm, top=2cm, bottom=2cm, a4paper"
+    fontsize: 12pt
+    header-includes:
+      - \usepackage{xeCJK}
+      - \setCJKmainfont{Microsoft JhengHei UI}
+toc: true  
+---
+
+```{r}
+library(showtext)
+showtext_auto()  # 啟用 showtext
+font_add("Microsoft JhengHei UI", "C:/Windows/Fonts/msjh.ttc")  # 添加你使用的字體
+```
+
+```{r library}
+library(Hmisc)
+library(skimr)
+library(DataExplorer)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(GGally)
+library(plotly)
+library(gridExtra)
+library(knitr)
+library(car)
+setwd("C:\\Users\\user\\Downloads\\統諮期末\\統諮期末\\統諮期末1226")
+#setwd("C:/Users/User/OneDrive/桌面/統諮期末")
+data <- read.csv("Sleep_health_and_lifestyle_dataset.csv")
+```
+
+# 1. Conduct necessary data preprocessing
+
+## 敘述性統計/missing values診斷
+```{r descriptive statistics}
+# Check structure of the dataset
+head(data)
+dim(data)
+names(data)
+str(data)      
+skim(data)
+describe(data)
+sum(is.na(data))
+plot_missing(data)
+```
+
+此筆資料集共有374筆資料，13個變數且無缺失值
+
+其中gender,occupation,quality.of.sleep為類別變數;
+
+age,sleep.duration,blood.pressure為連續變數
+
+## Scaling for predicting
+```{r scale}
+# Scale numerical variables
+#num_cols <- c("carat", "depth", "table", "price", "x", "y", "z")
+#diamond[num_cols] <- scale(diamond[num_cols])
+```
+
+## table one-變數總表
+```{r table one}
+summary_table <- data %>%
+  summarise(
+    Variable = c(
+      "Person ID",
+      "Gender",
+      "Age",
+      "Occupation",
+      "Sleep Duration",
+      "Quality of Sleep",
+      "Physical Activity Level",
+      "Stress Level",
+      "BMI Category",
+      "Blood Pressure",
+      "Heart Rate",
+      "Daily Steps",
+      "Sleep Disorder"
+    ),
+    Description = c(
+      "編號",
+      "性別",
+      "年齡",
+      "職業",
+      "每日睡眠時長(小時)",
+      "主觀認定之睡眠品質",
+      "Physical Activity Level",
+      "主觀認定之壓力程度",
+      "BMI類別",
+      "血壓",
+      "脈搏",
+      "每日步數",
+      "睡眠疾病"
+    ),
+    remark=c(
+      "1-374",
+      "Male/Female",
+      "27-59",
+      "Occupation",
+      "Sleep Duration",
+      "scale: 1-10",
+      "Physical Activity Level",
+      "scale: 1-10",
+      "Underweight/Normal/Overweight...",
+      "systolic/diastolic",
+      "bpm",
+      "Daily Steps",
+      "None/Insomnia/Apnea"
+    )
+  )
+kable(summary_table, format = "markdown", digits = 2, caption = " 變數解釋")
+```
+
+## 資料前處理 - 變數處理(刪除、分類)
+```{r pre-processing}
+#刪除Person ID
+data <- data %>% select(-`Person.ID`)
+
+#將Blood Pressure分為正常(0)與不正常(1)兩類
+# Define the list of normal blood pressure values
+unique(data$Blood.Pressure)
+normal_bp <- c("120/80", "126/83", "125/80", "128/84", "129/84", 
+               "117/76", "118/76", "115/75", "125/82", "122/80")
+# Apply the transformation
+data$Blood.Pressure<- ifelse(data$Blood.Pressure %in% normal_bp, 0, 1)
+
+#分類physical activity level
+data$Physical.Activity.Level<-ifelse(data$Physical.Activity.Level<=35,"<=35",
+                              ifelse(data$Physical.Activity.Level<=45,"<=45",
+                              ifelse(data$Physical.Activity.Level<=60,"<=60",
+                              ifelse(data$Physical.Activity.Level<=75,"<=75",
+                              "<=90"))))
+#分類daily steps
+data$Daily.Steps <- ifelse(data$Daily.Steps<=5000,"<=5000",
+                    ifelse(data$Daily.Steps<=6000,"<=6000",
+                    ifelse(data$Daily.Steps<=7000,"<=7000","7000up")))  
+
+#將睡眠疾病->0,1
+data$Sleep.Disorder <- ifelse(data$Sleep.Disorder=="None",0,1)
+
+#分類BMI
+data$BMI.Category <- ifelse(data$BMI.Category == "Normal Weight","Normal",
+                            data$BMI.Category)
+data$BMI.Category <- ifelse(data$BMI.Category == "Obese","Overweight",
+                            data$BMI.Category)
+
+#分類quality of sleep
+data$Quality.of.Sleep <- ifelse(data$Quality.of.Sleep==4 | 
+                                data$Quality.of.Sleep==5,"4-5",
+                                data$Quality.of.Sleep)
+
+#分類occupation
+data$Occupation <- ifelse(data$Occupation=="Manager" | data$Occupation=="Sales Representative" ,"Salesperson",data$Occupation)
+data$Occupation <- ifelse(data$Occupation=="Software Engineer"  ,"Engineer",data$Occupation)
+```
+
+## Encoding Categorical Variables
+```{r encoding}
+data$Blood.Pressure <- as.factor(data$Blood.Pressure)
+data$Gender <- as.factor(data$Gender)
+data$Occupation <- as.factor(data$Occupation)
+data$Quality.of.Sleep <- as.factor(data$Quality.of.Sleep)
+data$Stress.Level <- as.factor(data$Stress.Level)
+data$BMI.Category <- as.factor(data$BMI.Category)
+data$Sleep.Disorder <- as.factor(data$Sleep.Disorder)
+data$Physical.Activity.Level <- as.factor(data$Physical.Activity.Level)
+data$Daily.Steps <- as.factor(data$Daily.Steps)
+```
+
+## 處理後的資料
+```{r after}
+skim(data)
+describe(data)
+```
+
+用11個變數(分別有8個類別變數以及3個連續變數)預測是否有睡眠疾病(類別變數)
+
+## 描述性統計:比較不同組別間的變數分布差異
+```{r descriptive2}
+library(tableone)
+
+# 定義變數
+categorical_vars <- c('Gender','Occupation','Quality.of.Sleep','Physical.Activity.Level','Stress.Level','BMI.Category','Daily.Steps','Blood.Pressure')
+continuous_vars <- c('Age','Sleep.Duration','Heart.Rate') 
+
+# 分組
+group_var <- "Sleep.Disorder" 
+
+# 建立 Table One
+table_one <- CreateTableOne(vars = c(categorical_vars, continuous_vars), 
+                            strata = group_var, 
+                            data = data, 
+                            factorVars = categorical_vars, 
+                            addOverall = TRUE)
+
+# Table One
+print(table_one,showAllLevels = TRUE)
+```
+
+
+# 2. EDA
+
+## Distribution of the data
+
+## i.categorical variable
+```{r plot1}
+#| fig-width: 7
+#| fig-height: 3
+ggplot(data, aes(x = Gender, fill = Gender)) +
+  geom_bar() +
+  labs(title = "Count of Gender", x = "Gender", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, aes(x = Occupation, fill = Occupation)) +
+  geom_bar() +
+  labs(title = "Count of Occupation", x = "Occupation", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, aes(x = Quality.of.Sleep, fill = Quality.of.Sleep)) +
+  geom_bar() +
+  labs(title = "Count of Quality.of.Sleep", x = "Quality.of.Sleep", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, 
+  aes(x = Physical.Activity.Level, fill = Physical.Activity.Level)) +
+  geom_bar() +
+  labs(title = "Count of Physical.Activity.Level",
+  x = "Physical.Activity.Level", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, aes(x = Stress.Level, fill = Stress.Level)) +
+  geom_bar() +
+  labs(title = "Count of Stress.Level", x = "Stress.Level", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, aes(x = BMI.Category, fill = BMI.Category)) +
+  geom_bar() +
+  labs(title = "Count of BMI.Category", x = "BMI.Category", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, aes(x = Daily.Steps, fill = Daily.Steps)) +
+  geom_bar() +
+  labs(title = "Count of Daily.Steps", x = "Daily.Steps", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+ggplot(data, aes(x = Blood.Pressure, fill = Blood.Pressure)) +
+  geom_bar() +
+  labs(title = "Count of Blood Pressure", x = "Blood.Pressure", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+```
+
+## ii.continuous variable
+```{r}
+graphics::layout(mat = matrix(c(1,2),2, byrow = FALSE),  height = c(8,1))
+par(mar=c(4, 4, 3, 2))
+hist(data$Age, main = 'Distribution of Age',
+     xlab="Age",col="lightblue")
+par(mar=c(0.5, 4, 0.5, 2))
+boxplot(data$Age, xaxt = "n", horizontal=TRUE,  
+        col="pink", border="black", frame = FALSE)
+
+par(mar=c(4, 4, 3, 2))
+hist(data$Sleep.Duration, main = 'Distribution of Sleep.Duration',
+     xlab="Sleep.Duration",col="lightblue")
+par(mar=c(0.5, 4, 0.5, 2))
+boxplot(data$Sleep.Duration, xaxt = "n", horizontal=TRUE,  
+        col="pink", border="black", frame = FALSE)
+
+par(mar=c(4, 4, 3, 2))
+hist(data$Heart.Rate, main = 'Distribution of Heart.Rate',
+     xlab="Heart.Rate",col="lightblue")
+par(mar=c(0.5, 4, 0.5, 2))
+boxplot(data$Heart.Rate, xaxt = "n", horizontal=TRUE,  
+        col="pink", border="black", frame = FALSE)
+```
+
+## iii.Sleep Disorder
+```{r}
+#| fig-width: 6
+#| fig-height: 3
+ggplot(data, aes(x = Sleep.Disorder, fill = Sleep.Disorder)) +
+  geom_bar() +
+  labs(title = "Count of Sleep.Disorder", x = "Sleep.Disorder", y = "Count") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+
+data %>%
+  group_by(`Sleep.Disorder`, Gender) %>%
+  summarise(count = n(), .groups = "drop") 
+```
+
+## Correlation between data(variables & sleep disorder)
+
+## i.categorical variable
+```{r}
+#| fig-width: 7
+#| fig-height: 3
+ggplot(data, aes(x = Gender, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Gender and Sleep Disorder", 
+       x = "Gender", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = Occupation, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Occupation and Sleep Disorder", 
+       x = "Occupation", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = Quality.of.Sleep, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Sleep Quality and Sleep Disorder", 
+       x = "Quality.of.Sleep", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = Physical.Activity.Level, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Physical.Activity.Level and Sleep Disorder", 
+       x = "Physical.Activity.Level", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = Stress.Level, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Stress.Level and Sleep Disorder", 
+       x = "Stress.Level", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = BMI.Category, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between BMI.Category and Sleep Disorder", 
+       x = "BMI.Category", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = Daily.Steps, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Daily.Steps and Sleep Disorder", 
+       x = "Daily.Steps", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(data, aes(x = Blood.Pressure, fill = Sleep.Disorder)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Relationship between Daily.Steps and Sleep Disorder", 
+       x = "Blood Pressure", 
+       y = "Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+```
+
+1.性別:調查資料中，女生中有睡眠疾病的比例較高；男性中無睡眠疾病的比例較高
+
+2.職業:無睡眠疾病比例較高的有會計師、醫師、工程師以及律師；
+       有睡眠疾病比例較高的有護士、商人以及老師
+       
+3.睡眠品質:可大致上看出睡眠品質越高，有睡眠疾病的比例越低
+
+4.Physical Activity Level:?
+
+5.壓力指數:可大致上看出壓力指數高，有睡眠疾病的比例也高
+           但睡眠疾病比例最低的是壓力指數適中的人
+           
+6.BMI指數:BMI正常的人大多無睡眠疾病，而過重的人大多有睡眠疾病
+
+7.每日步數:每日走大於7000步的人擁有睡眠疾病的比例遠低於無睡眠疾病
+
+8.血壓:血壓正常的人大多無睡眠疾病，而血壓不正常的人則有較高的比例有睡眠疾病
+
+### 馬賽克圖-可以清楚看出比例
+```{r cool}
+#| fig-width: 3
+#| fig-height: 3
+library(ggmosaic)
+# 繪製馬賽克圖
+ggplot(data) +
+  geom_mosaic(aes(x = product(BMI.Category), fill = Sleep.Disorder)) +
+  labs(title = "Mosaic Plot of BMI Category and Sleep Disorder", 
+       x = "Gender", 
+       y = "Proportion") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+## ii.continuous variable
+```{r continuous1}
+#| fig-width: 4
+#| fig-height: 3
+ggplot(data, aes(x = Sleep.Disorder, y = Age, fill = Sleep.Disorder)) +
+  geom_boxplot() +
+  labs(title = "Sleep disorder Distribution by Age", 
+       x = "Sleep.Disorder", y = "Age") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+
+ggplot(data, aes(x = Sleep.Disorder, y = Sleep.Duration, fill = Sleep.Disorder)) +
+  geom_boxplot() +
+  labs(title = "Sleep disorder Distribution by Sleep.Duration", 
+       x = "Sleep.Disorder", y = "Sleep.Duration") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+
+ggplot(data, aes(x = Sleep.Disorder, y = Heart.Rate, fill = Sleep.Disorder)) +
+  geom_boxplot() +
+  labs(title = "Sleep disorder Distribution by Heart Rate", 
+       x = "Sleep.Disorder", y = "Heart Rate") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+1.年齡:有睡眠疾病的平均年齡高於無睡眠疾病
+
+2.睡眠時長:有睡眠疾病的睡眠時長低於無睡眠疾病
+
+3.心率:有睡眠疾病的人心率平均高於無睡眠疾病
+
+## 連續型自變數之間的關係
+```{r correlation}
+#| fig-width: 4
+#| fig-height: 4
+#heatmap
+numeric_vars <- data %>% select(Age, Sleep.Duration,Heart.Rate)
+cor_matrix <- cor(numeric_vars)
+corrplot(cor_matrix, method = "number", type = "upper", 
+         tl.col = "black", tl.srt = 45, 
+         col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+
+可以發現，
+Age & sleep duration 為中度正相關(0.34)
+
+而變數間呈現負相關的組合:
+1.Heart.Rate & sleep duration、
+2.Age & Heart.Rate (-0.23)
+
+其中Heart.Rate & sleep duration相關係數達到-0.5，屬高度相關
+
+## 類別型自變數之間的關係(計算 Cramér's V & 卡方檢定 & fisher exact test)
+
+除了Gender和Physical.Activity.Level、Gender和Blood.Pressure 之p-value 皆大於0.05外，其餘類別變數間皆顯著
+而高度相關可能的組合有(通常Cramér's V 如果大於0.5屬於高度相關，表示兩個類別變數之間具強關聯):
+1.Gender	Daily.Steps
+2.BMI.Category	Blood.Pressure
+
+直接與Sleep.Disorder(目標變數)具高度相關的變數有以下幾組，可能對於預測結果會有幫助:
+3.Physical.Activity.Level	Sleep.Disorder
+4.BMI.Category	Sleep.Disorder
+5.Blood.Pressure	Sleep.Disorder
+
+其中，中度相關的組合中值得注意的是(p-value<10^-3):
+Occupation 幾乎與所有類別變數的組合皆為中度相關(與Gender、Quality.of.Sleep、Physical.Activity.Level、Stress.Level、BMI.Category、Blood.Pressure、Daily.Steps、Sleep.Disorder等變數組合)
+
+->可能反映了職業對生活習慣、健康指標和心理壓力的潛在影響。
+
+而這裡要注意的一點是，因為fisher exact test 無法計算Cramer's V 因此在比較是否有高度相關是根據其p-value值與可計算Cramer's v組的p-value值作為對照與參考，發現p-value至少要小於10^-7，Cramer's V才可能有機會達到0.5，以此概念延伸用在fisher exact test的變數組合中
+
+```{r}
+# 獲取所有變數名稱
+all_vars <- names(data)
+
+# 確定類別與連續變數
+categorical_vars <- all_vars[sapply(data, is.factor)]
+continuous_vars <- all_vars[sapply(data, is.numeric)]
+
+# 初始化結果數據框
+results <- data.frame(
+  Variable1 = character(),
+  Variable2 = character(),
+  Correlation_Type = character(),
+  Correlation_Value = numeric(),
+  P_Value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# 計算相關性
+for (i in 1:(length(all_vars) - 1)) {
+  for (j in (i + 1):length(all_vars)) {
+    var1 <- all_vars[i]
+    var2 <- all_vars[j]
+    
+    # 類別對類別
+    if (var1 %in% categorical_vars && var2 %in% categorical_vars) {
+      tbl <- table(data[[var1]], data[[var2]])
+      
+      # 檢查每格的頻數是否小於 5
+      if (any(tbl < 5)) {
+        # 使用 Fisher's Exact Test
+        fisher_test <- fisher.test(tbl,simulate.p.value=TRUE)
+        results <- rbind(results, data.frame(
+          Variable1 = var1,
+          Variable2 = var2,
+          Correlation_Type = "Fisher's Exact Test",
+          Correlation_Value = NA,  # Fisher 無法計算 Cramer's V
+          P_Value = fisher_test$p.value
+        ))
+      } else {
+        # 使用 Chi-squared Test
+        chi_test <- chisq.test(tbl)
+        n <- sum(tbl)
+        min_dim <- min(nrow(tbl) - 1, ncol(tbl) - 1)
+        cramers_v <- sqrt(chi_test$statistic / (n * min_dim))
+        results <- rbind(results, data.frame(
+          Variable1 = var1,
+          Variable2 = var2,
+          Correlation_Type = "Cramer's V",
+          Correlation_Value = cramers_v,
+          P_Value = chi_test$p.value
+        ))
+      }
+    }
+  }
+}
+
+# 輸出結果
+library(knitr)
+kable(results, caption = "Categorical Variables Correlation Results")
+```
+
+## 連續v.s.類別變數
+
+類別 vs.連續: 
+
+使用Kruskal-Wallis檢定，皆為顯著(p-value<0.05)
+其中，值得注意的是，可以發現有幾個變數組合之p-value值極小，分別為:
+
+1.Sleep.Duration	Quality.of.Sleep
+2.Sleep.Duration	Stress.Level
+3.Quality.of.Sleep	Heart.Rate
+4.Stress.Level	Heart.Rate
+
+之後再對以上幾組做交互作用圖分析
+
+```{r summary}
+# 獲取所有變數名稱
+all_vars <- names(data)
+
+# 確定類別與連續變數
+categorical_vars <- all_vars[sapply(data, is.factor)]
+continuous_vars <- all_vars[sapply(data, is.numeric)]
+
+# 初始化結果數據框
+results <- data.frame(
+  Variable1 = character(),
+  Variable2 = character(),
+  Correlation_Type = character(),
+  P_Value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# 計算相關性
+for (i in 1:(length(all_vars) - 1)) {
+  for (j in (i + 1):length(all_vars)) {
+    var1 <- all_vars[i]
+    var2 <- all_vars[j]
+    if ((var1 %in% categorical_vars && var2 %in% continuous_vars) ||
+               (var1 %in% continuous_vars && var2 %in% categorical_vars)) {
+      cat_var <- ifelse(var1 %in% categorical_vars, var1, var2)
+      cont_var <- ifelse(var1 %in% continuous_vars, var1, var2)
+      kw_test <- kruskal.test(data[[cont_var]] ~ data[[cat_var]])
+      results <- rbind(results, data.frame(
+        Variable1 = var1,
+        Variable2 = var2,
+        Correlation_Type = "Kruskal-Wallis",
+        P_Value = kw_test$p.value
+      ))
+    }
+  }
+}
+kable(results)
+```
+
+## 一些類別變數交互作用的圖
+
+從剛剛的相關性分析，由於fisher exact test、KS test僅有p值，無法得知相關程度為何，因此透過交互作用圖可以對變數之間的交互作用有更好的判斷與解讀
+
+1.Occupation 作為關鍵變數，與多個變數皆有相關(將近全部變數)，因此想更加深入了解職業類型所帶來的特性以及資料分布情形：
+
+依序看幾個感興趣的變數:Blood.Pressure、BMI.Category、Stress.Level、Sleep Duration、Quality.of.Sleep、Age、Physical.Activity.Level、Daily.Steps 與 Sleep.Disorder 之間散布的資料情形
+
+```{r}
+#p <- 
+library(plotly)
+ggplot(data, aes(x = Blood.Pressure, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Bloodpressure and Occupation",
+       size = "Count") +
+  theme_minimal()
+
+# 轉為交互式氣泡圖
+#interactive_plot <- ggplotly(p)
+
+# 顯示交互式圖
+#interactive_plot
+```
+
+```{r}
+ggplot(data, aes(x = BMI.Category, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between BMI and Occupation",
+       size = "Count") +
+  theme_minimal()
+
+```
+
+
+```{r,}
+
+# 靜態氣泡圖
+ggplot(data, aes(x = Stress.Level, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Stress.Level and Occupation",
+       size = "Count") +
+  theme_minimal()
+
+```
+
+
+```{r}
+ggplot(data, aes(x = Sleep.Duration, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Sleep.Duration and Occupation",
+       size = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(data, aes(x = Quality.of.Sleep, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Quality.of.Sleep and Occupation",
+       size = "Count") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data, aes(x = Age, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Age and Occupation",
+       size = "Count") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data, aes(x = Physical.Activity.Level, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Age and Occupation",
+       size = "Count") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data, aes(x = Daily.Steps, y = Occupation, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Age and Occupation",
+       size = "Count") +
+  theme_minimal()
+```
+
+結論:
+    1. 發現 Blood.Pressure、BMI.Category    
+       無論是哪一種職業，對睡眠疾病皆可以看到明顯的分群
+       
+    2. 幾乎所有護士、顯著比例的銷售人員和教師患有睡眠疾病；醫生、會計師、工程師、律師則大部分皆無患睡眠疾病
+    
+    3. 護士大多屬於女性，且年齡大多介於50-60歲、有較高的BMI、血壓得到睡眠疾病，但在壓力水準下，卻有極端分群，分別在壓力低和壓力高的群體有大部分的人有睡眠疾病，同理在睡眠品質和睡眠時長下也有相似的狀況
+    
+    4. 而大部分的銷售人員年齡大多介於40-50歲，在患有睡眠疾病下，同時具有較高的BMI、血壓、巨大壓力以及睡眠時長短又品質較低的現象
+    
+    5. 大部分的教師年齡大多介於40-50歲，在患有睡眠疾病下，同時具有較高的BMI、血壓、睡眠時長短的現象
+    
+    6. 患有睡眠疾病的人，貌似有較高的血壓、BMI、較年輕、睡眠時長較短；沒有患病的人與之相反，這樣的情形也顯示在職業上
+     
+
+2.其他感興趣想了解的變數交互作用圖
+
+Sleep.Duration	Quality.of.Sleep
+Sleep.Duration	Stress.Level
+Stress.Level  BloodPressure
+Quality.of.Sleep	Heart.Rate
+Stress.Level	Heart.Rate
+Physical.Activity.Level	Daily.Steps
+
+從圖中:
+Physical.Activity.Level & Daily.Steps 、
+Sleep.Duration & Quality.of.Sleep
+可以看出資料點大部分聚集在對角線上，代表兩組可能存在高度相關，因此可以僅用一個變數代表即可
+Sleep.Duration & Stress.Level 雖然對角的不明顯，但仍然可以稍微看出，當壓力越小時，睡眠時長貌似也越長，然而跟睡眠疾病似乎較無直接的關係，並未發現有明顯的分群(有無睡眠疾病)
+Stress.Level & BloodPressure 未發現有明顯趨勢
+Stress.Level & Heart.Rate :當壓力越大時，心跳似乎也較快
+Quality.of.Sleep &	Heart.Rate:當睡眠品質越好時，心跳似乎也較慢
+
+```{r}
+ggplot(data, aes(x = Sleep.Duration, y = Quality.of.Sleep, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Sleep.Duration and Quality.of.Sleep",
+       size = "Count") +
+  theme_minimal()
+```
+
+
+```{r}
+ggplot(data, aes(x = Sleep.Duration, y = Stress.Level, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Stress.Level and Sleep.Duration",
+       size = "Count") +
+  theme_minimal()
+
+```
+
+
+```{r}
+ggplot(data, aes(x = Stress.Level, y = Blood.Pressure, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Stress.Level and Blood.Pressure",
+       size = "Count") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data, aes(x = Quality.of.Sleep, y = Heart.Rate, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Quality.of.Sleep and Heart.Rate",
+       size = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(data, aes(x = Stress.Level, y = Heart.Rate, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Stress.Level and Heart.Rate",
+       size = "Count") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data, aes(x = Physical.Activity.Level, y = Daily.Steps, color = Sleep.Disorder)) +
+  geom_count() +
+  scale_size_area(max_size = 10) +
+  labs(title = "Interaction between Physical.Activity.Level and Daily.Steps",
+       size = "Count") +
+  theme_minimal()
+```
+
+# 3. Construct a predictive model for sleep disorder
+```{r library2}
+library(caret)          # For data partitioning and confusion matrix
+library(ROCR)           # For ROC curve and AUC
+library(pROC) 
+library(randomForest) 
+library(xgboost)
+library(Matrix)
+library(pscl)
+library(glmnet)
+```
+
+```{r}
+set.seed(123) 
+train_index <- createDataPartition(data$Sleep.Disorder, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+```
+
+## logistic regression(全放/共線性非常高)
+```{r}
+model <- glm(Sleep.Disorder ~ Age + Gender + Occupation + Sleep.Duration + 
+             Quality.of.Sleep + Physical.Activity.Level + Stress.Level + 
+             BMI.Category + Blood.Pressure + 
+             Heart.Rate + Daily.Steps, 
+             data = train_data, family = binomial())
+
+summary(model)  
+
+predicted_probabilities <- predict(model, newdata = test_data, type = "response")
+predicted_classes <- ifelse(predicted_probabilities > 0.5, 1, 0)
+
+# Confusion Matrix
+confusion_matrix <- confusionMatrix(as.factor(predicted_classes), test_data$Sleep.Disorder)
+print(confusion_matrix)
+# ROC
+roc_curve <- roc(test_data$Sleep.Disorder, predicted_probabilities)
+plot(roc_curve, main = "ROC Curve for Sleep Disorder Prediction")
+auc_value <- auc(roc_curve)
+print(paste("AUC:", auc_value))
+vif(model)
+```
+
+## logistic regression(stepwise挑變數/共線性還是有點高)
+
+Sleep.Duration + Quality.of.Sleep + Physical.Activity.Level +
+Stress.Level + Blood.Pressure + Heart.Rate + Daily.Steps
+```{r}
+library(MASS)
+model <- glm(Sleep.Disorder ~ Age + Gender + Occupation + Sleep.Duration + 
+             Quality.of.Sleep + Physical.Activity.Level + Stress.Level + 
+             BMI.Category + Blood.Pressure + 
+             Heart.Rate + Daily.Steps, 
+             data = train_data, family = binomial())
+
+logistic_model_step <- stepAIC(model, direction = "both")
+summary(logistic_model_step)
+vif(logistic_model_step)
+pseudo_r2 <- pR2(logistic_model_step)
+print(pseudo_r2)
+predicted_probs <- predict(logistic_model_step, newdata=test_data,type = "response")
+predicted_classes <- ifelse(predicted_probs > 0.4, 1, 0)
+library(caret)
+conf_matrix <- confusionMatrix(as.factor(predicted_classes), as.factor(test_data$Sleep.Disorder))
+print(conf_matrix)
+```
+
+## logistic regression(Elastic net/共線性還是有點高)
+Occupation + Sleep.Duration + Quality.of.Sleep + Physical.Activity.Level +
+Stress.Level + BMI.Category + Blood.Pressure + Heart.Rate
+```{r}
+library(glmnet)
+
+# 訓練 Elastic Net 模型
+variablenames <- names(data)[-c(12)]
+formula.x <- formula(paste("~", paste(variablenames, collapse=" + ")))
+X <- model.matrix(formula.x, data)
+y <- data$Sleep.Disorder
+
+## Using cross validation folds to select lambda.
+cv <- cv.glmnet(x=X, y=y, family = "binomial",  alpha = 0.5) ## alpha = 1, LASSO; = 0, ridge
+coefs <- coef(cv, s=cv$lambda.1se)  
+best_lambda <- cv$lambda.min
+print(best_lambda)
+fre.variables <- names(coefs[which(coefs[,1]!=0),1])
+fre.variables
+```
+
+```{r}
+logistic_model_select <- glm(Sleep.Disorder ~ Blood.Pressure  + Stress.Level +Sleep.Duration+ Occupation +Heart.Rate +Physical.Activity.Level +BMI.Category+Quality.of.Sleep
+, data = train_data, family = binomial())
+summary(logistic_model_select)
+vif(logistic_model_select)
+pseudo_r2 <- pR2(logistic_model_select)
+print(pseudo_r2)
+predicted_probs <- predict(logistic_model_select, newdata=test_data,type = "response")
+predicted_classes <- ifelse(predicted_probs > 0.4, 1, 0)
+library(caret)
+conf_matrix <- confusionMatrix(as.factor(predicted_classes), as.factor(test_data$Sleep.Disorder))
+print(conf_matrix)
+```
+
+## logistic regression(手選變數 by 變數間相關係數/scatter plotej/共線性解決)
+變數選取: Occupation + Blood.Pressure + Stress.Level 
+```{r logist_self}
+#BloodPressure_Upper + Stress.Level + Heart.Rate(不顯著)+ BMI.Category(不顯著) 0.93
+#BloodPressure_Upper + Stress.Level + BMI.Category (皆顯著)0.93->0.90
+#BloodPressure_Upper + Stress.Level + Sleep.Duration(不顯著) +  BMI.Category 、accuracy 0.9189 ->0.90
+#Occupation(顯著) + BloodPressure_Upper(顯著) 、accuracy0.9189 ->0.87 occupation不顯著
+#Occupation(顯著) + BloodPressure_Upper(顯著) + BMI.Category 、accuracy0.9189
+#Occupation(不顯著) + BloodPressure_Upper + Stress.Level、accuracy0.9189 ->0.93、Occupation顯著
+#生活方式:Stress.Level+ BMI.Category + Daily.Steps +Physical.Activity.Level(皆顯著)、0.9189
+
+#Stress.Level + Physical.Activity.Level + BMI.Category(皆顯著) 但accuracy較低0.9
+# Occupation+ Gender+Physical.Activity.Level +Stress.Level (皆顯著) 但accuracy較低0.9
+#生活方式: Occupation 0.86 、 BMI 0.89
+# Occupation+Physical.Activity.Level +Stress.Level(皆顯著) 但accuracy較低0.89
+#Stress.Level + Sleep.Duration + BMI.Category(皆顯著)/Occupation+Physical.Activity.Level +Stress.Level 但accuracy較低0.89
+#心血管健康:Blood Pressure+Heart.Rate(皆顯著)、0.83
+#睡眠指標: Sleep Duration、Quality of Sleep(不顯著)、0.79
+#Sleep.Duration+Stress.Level:0.81
+logistic_model_original <- glm(Sleep.Disorder ~ Occupation + Blood.Pressure + Stress.Level,  data = train_data, family = binomial())
+summary(logistic_model_original)
+library(car)
+vif(logistic_model_original)
+library(pscl)
+pseudo_r2 <- pR2(logistic_model_original)
+print(pseudo_r2)
+predicted_probs <- predict(logistic_model_original,newdata=test_data, type = "response")
+predicted_classes <- ifelse(predicted_probs > 0.4, 1, 0)
+library(caret)
+conf_matrix <- confusionMatrix(as.factor(predicted_classes), as.factor(test_data$Sleep.Disorder))
+print(conf_matrix)
+```
+
+
+## random forest
+Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure +Heart.Rate
+```{r random_forest}
+#全放 0.93
+#放Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure +Heart.Rate 0.93/0.91
+#不放Heart.Rate 0.9
+#Occupation+ Blood.Pressure + Stress.Level 0.9 /xgboost 0,93
+rf_model <- randomForest(Sleep.Disorder ~ Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure +Heart.Rate , 
+                         data = train_data, 
+                         ntree = 500,  # Number of trees in the forest
+                         mtry = 3,     # Number of predictors considered for each split
+                         importance = TRUE)  # To calculate variable importance
+print(rf_model)
+
+predicted_classes <- predict(rf_model, newdata = test_data)
+predicted_probabilities <- predict(rf_model, newdata = test_data, type = "prob")[, 2]
+
+#  Model Evaluation 
+# Confusion Matrix to assess performance
+confusion_matrix <- confusionMatrix(predicted_classes, as.factor(test_data$Sleep.Disorder))
+print(confusion_matrix)
+
+# ROC Curve and AUC 
+roc_curve <- roc(test_data$Sleep.Disorder, predicted_probabilities)
+plot(roc_curve, main = "ROC Curve for Random Forest Model")
+auc_value <- auc(roc_curve)
+print(paste("AUC:", auc_value))
+
+# Plot variable importance
+var_imp <- importance(rf_model)
+varImpPlot(rf_model, main = "Feature Importance in Random Forest")
+```
+
+## xgboost
+Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure
+```{r}
+#Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure 0.94
+#Occupation+ Blood.Pressure + Stress.Level xgboost 0,93
+#Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure +Heart.Rate 0.91
+data_dummy <- model.matrix(Sleep.Disorder ~ Sleep.Duration +Stress.Level + BMI.Category + Blood.Pressure  , data = data)[, -1] # Remove intercept
+labels <- as.numeric(as.character(data$Sleep.Disorder)) # Target variable (0 or 1)
+
+# Split the data into training and testing sets
+set.seed(123) # For reproducibility
+train_index <- createDataPartition(labels, p = 0.8, list = FALSE)
+X_train <- data_dummy[train_index, ]
+X_test <- data_dummy[-train_index, ]
+y_train <- labels[train_index]
+y_test <- labels[-train_index]
+dtrain <- xgb.DMatrix(data = X_train, label = y_train)
+dtest <- xgb.DMatrix(data = X_test, label = y_test)
+
+# Set hyperparameters for the XGBoost model
+param_list <- list(
+  objective = "binary:logistic", # For binary classification
+  eval_metric = "auc",           # We want to maximize AUC
+  eta = 0.1,                     # Learning rate
+  max_depth = 6,                 # Depth of the trees
+  subsample = 0.8,               # Row sampling ratio
+  colsample_bytree = 0.8,
+  verbose = 1,                   # 訓練日誌詳細程度
+  watchlist = list(train = dtrain, test = dtest), 
+  early_stopping_rounds = 10# Feature sampling ratio
+)
+
+# Train the XGBoost model
+set.seed(123)
+xgb_model <- xgboost(
+  data = dtrain, 
+  params = param_list,          # Use params to specify objective
+  nrounds = 100              # Print training log
+#  watchlist = list(train = dtrain, test = dtest), 
+ # early_stopping_rounds = 10  # Stop early if performance doesn't improve
+)
+# Predict probabilities on the test set
+pred_probs <- predict(xgb_model, newdata = dtest)
+# Convert probabilities to binary predictions (threshold = 0.5)
+predictions <- ifelse(pred_probs > 0.5, 1, 0)
+# Confusion matrix
+confusion_matrix <- confusionMatrix(as.factor(predictions), as.factor(y_test))
+print(confusion_matrix)
+# Calculate AUC
+auc <- roc(y_test, pred_probs)
+print(auc$auc)
+
+importance_matrix <- xgb.importance(model = xgb_model)
+# Plot feature importance
+xgb.plot.importance(importance_matrix)
+```
+
+## comparison
+```{r comparison}
+kable(data.frame(
+  Metric = c('Accuracy', 
+             'AUC', 
+             'Multicollinearity', 
+             'Feature Importance', 
+             'Handles Nonlinearities', 
+             'Computation Time'),
+  XGBoost = c('Highest', 0.925, 'Not affected', 'Provides insights', 'Yes', 'Moderate'),
+  Random_Forest = c('Higher', 0.913, 'Not affected', 'Provides insights', 'Yes', 'Slow'),
+  Logistic_Regression = c('Lower', 0.889, 'Affected', 'Limited interpretability', 'No', 'Fast'))
+)
+```
+
+## try cross validation
+```{r cross}
+train_control <- trainControl(
+  method = "cv",  # k-fold cross-validation
+  number = 10,    # Number of folds
+)
+
+#---------------------------------------所有變數
+
+logist<-train(
+  Sleep.Disorder ~ ., 
+  data = data, 
+  method = "glm",  # Specify "multinom" for multinomial logistic regression
+  family = "binomial",       # Specify binary outcome
+  trControl = train_control,
+)
+logist$results
+print(logist)
+# view final model 最終決定的模型，以及模型估計係數值
+logist$finalModel
+#view predictions for each fold，每一折(fold)/子集(subset)資料的預測誤差
+logist$resample
+
+#--------------------------------------------#stepwise變數
+
+logist_step<-train(
+  Sleep.Disorder ~ Sleep.Duration + Quality.of.Sleep + Physical.Activity.Level + Stress.Level + Blood.Pressure + Daily.Steps, 
+  data = data, 
+  method = "glm",  # Specify "multinom" for multinomial logistic regression
+  family = "binomial",       # Specify binary outcome
+  trControl = train_control,
+)
+logist_step$results
+print(logist_step)
+# view final model 最終決定的模型，以及模型估計係數值
+logist_step$finalModel
+#view predictions for each fold，每一折(fold)/子集(subset)資料的預測誤差
+logist_step$resample
+
+#------------------------------------elastic(還不確定)
+
+# Define predictor variables
+variablenames <- names(data)[-c(13)]  # Exclude unwanted columns
+formula.x <- formula(paste("~", paste(variablenames, collapse=" + ")))
+X <- model.matrix(formula.x, data)[, -1]  # Remove intercept column
+y <- as.numeric(as.character(data$Sleep.Disorder))  # Ensure binary numeric target (0, 1)
+table(y)
+# Fit Elastic Net model with cross-validation
+cv <- cv.glmnet(
+  x = X, 
+  y = y, 
+  family = "binomial", 
+  alpha = 0.5,        # Alpha controls the Elastic Net mixing (0: ridge, 1: LASSO)
+  type.measure = "auc",  # Evaluate using AUC
+  nfolds = 10         # Number of folds for cross-validation
+)
+# Extract coefficients for the best lambda (lambda.1se for simplicity)
+coefs <- coef(cv, s = cv$lambda.1se)
+# Print the best lambda
+best_lambda <- cv$lambda.min
+print(paste("Best lambda:", best_lambda))
+# Extract non-zero coefficient variables (important features)
+fre.variables <- rownames(coefs)[coefs[, 1] != 0]
+fre.variables <- fre.variables[fre.variables != "(Intercept)"]  # Exclude intercept
+print("Selected features:")
+print(fre.variables)
+
+#-----------------------------手選變數
+
+logist_self<-train(
+  Sleep.Disorder ~ Occupation + Blood.Pressure + Stress.Level, 
+  data = data, 
+  method = "glm",  # Specify "multinom" for multinomial logistic regression
+  family = "binomial",       # Specify binary outcome
+  trControl = train_control,
+)
+logist_self$results
+print(logist_self)
+# view final model 最終決定的模型，以及模型估計係數值
+logist_self$finalModel
+#view predictions for each fold，每一折(fold)/子集(subset)資料的預測誤差
+logist_self$resample
+```
+
+## cross validation(repeated k-fold)
+```{r}
+train.rkfold <- trainControl(method = "repeatedcv", number = 5, repeats = 3)
+
+logist1<-train(
+  Sleep.Disorder ~ ., 
+  data = data, 
+  method = "glm",  # Specify "multinom" for multinomial logistic regression
+  family = "binomial",       # Specify binary outcome
+  trControl = train.rkfold,
+)
+print(logist1)
+logist1$results
+```
+
+
+## xgboost 調參+cross-validation
+```{r}
+library(caret)
+
+# 建立參數網格
+param_grid <- expand.grid(
+  nrounds = c(100,500),                        # 樹的迭代次數
+  max_depth = c(3, 6),               # 最大深度
+  eta = c(0.1,0.05),              # 學習率
+  gamma = c(0,1,5),                   # 最小損失減少，分裂所需
+  colsample_bytree = c(0.6,0.8),    # 特徵採樣比例
+  min_child_weight = c(1,3),        # 最小葉子節點權重
+  subsample = c(0.6,0.8)            # 樣本採樣比例
+)
+
+
+train_control <- trainControl(
+  method = "cv",                        # 使用交叉驗證
+  number = 3 
+)
+
+# 訓練模型
+xgb_tuned <- train(
+  Sleep.Disorder ~ Sleep.Duration + Stress.Level + BMI.Category + Blood.Pressure,  # 使用公式指定變數
+  data = data,
+  method = "xgbTree",
+  trControl = train_control,
+  tuneGrid = param_grid,                # 使用網格搜尋
+  #metric = "auc",                  # 指定評估指標，可根據需要改為 "Kappa" 等
+  #early_stopping_rounds = 5             # 提早停止
+)
+
+# 查看最佳參數
+print(xgb_tuned$bestTune)
+# 評估模型
+print(xgb_tuned)
+#Accuracy was used to select the optimal model using the
+# largest value.
+#The final values used for the model were nrounds =
+# 100, max_depth = 3, eta = 0.1, gamma = 0, colsample_bytree
+# = 0.6, min_child_weight = 1 and subsample = 0.8.
+xgb_tuned$results
+```
+
+
+
+
+
+
